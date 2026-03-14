@@ -23,8 +23,8 @@ int main(int argc, char* argv[]) {
 
         std::string html = fetcher.download(currentUrl);
 
-        // i could parse the html here
-        crawledCount++; // but for now, ill keep it simple
+        urlQueue.push(currentUrl); // for testing build
+        crawledCount++;
     }
 
     std::cout << "\nCrawling completed, total pages: " << crawledCount << std::endl;
