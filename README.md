@@ -8,5 +8,5 @@ Initially created to explore multi-threading in a more applied way, beyond the O
 ```
 cmake -S . -B build
 cmake --build build
-./build/crawler <url> <limit>
+./build/crawler <url> <limit> <num_threads>
 ```
