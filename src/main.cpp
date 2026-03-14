@@ -1,32 +1,70 @@
 #include <iostream>
+#include <unordered_set>
+#include <thread>
 #include "core/url_queue.h"
 #include "network/fetcher.h"
+#include "parser/html_parser.h"
+#include "core/visited_set.h"
 
-int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: ./crawler <seed_url> <limits>" << std::endl;
+void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &parser, std::atomic<int> &count, int limits)
+{
+    while (count < limits)
+    {
+        std::string url = queue.pop();
+
+        if (!visited.testAndInsert(url))
+        {
+            if (count >= limits)
+                break;
+
+            std::cout << "Thread " << std::this_thread::get_id() << " crawling: " << url << std::endl;
+
+            std::string html = fetcher.download(url);
+            auto links = parser.extractLinks(html);
+
+            for (const auto &link : links)
+            {
+                queue.push(link);
+            }
+
+            count++;
+        }
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 4)
+    {
+        std::cerr << "Usage: ./crawler <seed_url> <limits> <num_threads>" << std::endl;
         return 1;
     }
 
     std::string seed = argv[1];
     int limits = std::stoi(argv[2]);
+    int numThreads = std::stoi(argv[3]);
 
     SafeQueue urlQueue;
     Fetcher fetcher;
-    
+    Parser parser;
+    VisitedSet visited;
+    std::atomic<int> crawledCount(0);
+
     urlQueue.push(seed);
-    int crawledCount = 0;
 
-    while (crawledCount < limits) {
-        std::string currentUrl = urlQueue.pop();
-        std::cout << "Crawling: " << currentUrl << std::endl;
-
-        std::string html = fetcher.download(currentUrl);
-
-        urlQueue.push(currentUrl); // for testing build
-        crawledCount++;
+    std::vector<std::thread> threads;
+    for (int i = 0; i < numThreads; ++i)
+    {
+        threads.emplace_back(worker, std::ref(urlQueue), std::ref(visited),
+                             std::ref(fetcher), std::ref(parser),
+                             std::ref(crawledCount), limits);
     }
 
-    std::cout << "\nCrawling completed, total pages: " << crawledCount << std::endl;
-    return 0;
+    for (auto &t : threads)
+    {
+        t.join();
+    }
+
+    std::cout << "\nCrawling completed, total pages: " << visited.size() << std::endl;
+    return 0; // there may be a deadlock in this code
 }
