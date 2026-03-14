@@ -6,16 +6,26 @@
 #include "parser/html_parser.h"
 #include "core/visited_set.h"
 
-void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &parser, std::atomic<int> &count, int limits)
+void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &parser, std::atomic<int> &count, int limit)
 {
-    while (count < limits)
+    std::string url;
+
+    while (queue.pop(url))
     {
-        std::string url = queue.pop();
+        if (count >= limit)
+        {
+            queue.requestShutdown();
+            break;
+        }
 
         if (!visited.testAndInsert(url))
         {
-            if (count >= limits)
+            // check again to avoid "TOCTOU" race condition
+            if (count >= limit)
+            {
+                queue.requestShutdown();
                 break;
+            }
 
             std::cout << "Thread " << std::this_thread::get_id() << " crawling: " << url << std::endl;
 
@@ -28,6 +38,13 @@ void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &par
             }
 
             count++;
+
+            // check again, maybe this was the last page needed
+            if (count >= limit)
+            {
+                queue.requestShutdown();
+                break;
+            }
         }
     }
 }
@@ -36,12 +53,12 @@ int main(int argc, char *argv[])
 {
     if (argc < 4)
     {
-        std::cerr << "Usage: ./crawler <seed_url> <limits> <num_threads>" << std::endl;
+        std::cerr << "Usage: ./crawler <seed_url> <limit> <num_threads>" << std::endl;
         return 1;
     }
 
     std::string seed = argv[1];
-    int limits = std::stoi(argv[2]);
+    int limit = std::stoi(argv[2]);
     int numThreads = std::stoi(argv[3]);
 
     SafeQueue urlQueue;
@@ -57,7 +74,7 @@ int main(int argc, char *argv[])
     {
         threads.emplace_back(worker, std::ref(urlQueue), std::ref(visited),
                              std::ref(fetcher), std::ref(parser),
-                             std::ref(crawledCount), limits);
+                             std::ref(crawledCount), limit);
     }
 
     for (auto &t : threads)
@@ -66,5 +83,5 @@ int main(int argc, char *argv[])
     }
 
     std::cout << "\nCrawling completed, total pages: " << visited.size() << std::endl;
-    return 0; // there may be a deadlock in this code
+    return 0;
 }
