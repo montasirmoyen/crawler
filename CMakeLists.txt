@@ -7,10 +7,10 @@ find_package(CURL REQUIRED)
 
 include_directories(src)
 
+find_package(Threads REQUIRED)
+
 add_executable(crawler 
     src/main.cpp 
-    src/core/url_queue.cpp 
-    src/network/fetcher.cpp
 )
 
 target_link_libraries(crawler CURL::libcurl Threads::Threads)
