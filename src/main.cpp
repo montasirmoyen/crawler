@@ -1,28 +1,35 @@
 #include <iostream>
 #include <unordered_set>
 #include <thread>
+#include <vector>
+#include <atomic>
 #include "core/url_queue.h"
 #include "network/fetcher.h"
 #include "parser/html_parser.h"
 #include "core/visited_set.h"
 
-void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &parser, std::atomic<int> &count, int limit)
+void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &parser,
+            std::atomic<int> &count, std::atomic<int> &activeWorkers, int limit)
 {
     std::string url;
 
     while (queue.pop(url))
     {
+        activeWorkers.fetch_add(1);
+
         if (count >= limit)
         {
+            activeWorkers.fetch_sub(1);
             queue.requestShutdown();
             break;
         }
 
-        if (!visited.testAndInsert(url))
+        if (visited.testAndInsert(url))
         {
             // check again to avoid "TOCTOU" race condition
             if (count >= limit)
             {
+                activeWorkers.fetch_sub(1);
                 queue.requestShutdown();
                 break;
             }
@@ -42,9 +49,17 @@ void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &par
             // check again, maybe this was the last page needed
             if (count >= limit)
             {
+                activeWorkers.fetch_sub(1);
                 queue.requestShutdown();
                 break;
             }
+        }
+
+        int remainingWorkers = activeWorkers.fetch_sub(1) - 1;
+        if (remainingWorkers == 0 && queue.empty())
+        {
+            queue.requestShutdown();
+            break;
         }
     }
 }
@@ -66,6 +81,7 @@ int main(int argc, char *argv[])
     Parser parser;
     VisitedSet visited;
     std::atomic<int> crawledCount(0);
+    std::atomic<int> activeWorkers(0);
 
     urlQueue.push(seed);
 
@@ -74,7 +90,7 @@ int main(int argc, char *argv[])
     {
         threads.emplace_back(worker, std::ref(urlQueue), std::ref(visited),
                              std::ref(fetcher), std::ref(parser),
-                             std::ref(crawledCount), limit);
+                             std::ref(crawledCount), std::ref(activeWorkers), limit);
     }
 
     for (auto &t : threads)

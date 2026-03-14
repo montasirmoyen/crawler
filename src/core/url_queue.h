@@ -41,4 +41,10 @@ public:
         q.pop();
         return true;
     }
+
+    bool empty()
+    {
+        std::lock_guard<std::mutex> lock(m);
+        return q.empty();
+    }
 };
