@@ -3,10 +3,101 @@
 #include <thread>
 #include <vector>
 #include <atomic>
+#include <fstream>
+#include <algorithm>
 #include "core/url_queue.h"
 #include "network/fetcher.h"
 #include "parser/html_parser.h"
 #include "core/visited_set.h"
+
+std::string xmlEscape(const std::string &value)
+{
+    std::string escaped;
+    escaped.reserve(value.size());
+
+    for (char c : value)
+    {
+        switch (c)
+        {
+        case '&':
+            escaped += "&amp;";
+            break;
+        case '<':
+            escaped += "&lt;";
+            break;
+        case '>':
+            escaped += "&gt;";
+            break;
+        case '\"':
+            escaped += "&quot;";
+            break;
+        case '\'':
+            escaped += "&apos;";
+            break;
+        default:
+            escaped += c;
+            break;
+        }
+    }
+
+    return escaped;
+}
+
+std::string extractHost(const std::string &url)
+{
+    size_t schemePos = url.find("://");
+    size_t hostStart = (schemePos == std::string::npos) ? 0 : schemePos + 3;
+    size_t hostEnd = url.find('/', hostStart);
+    if (hostEnd == std::string::npos)
+    {
+        return url.substr(hostStart);
+    }
+    return url.substr(hostStart, hostEnd - hostStart);
+}
+
+void writeSitemap(const std::vector<std::string> &allUrls, const std::string &seed)
+{
+    std::string seedHost = extractHost(seed);
+    std::vector<std::string> sitemapUrls;
+    sitemapUrls.reserve(allUrls.size());
+
+    for (const auto &url : allUrls)
+    {
+        if (extractHost(url) == seedHost)
+        {
+            sitemapUrls.push_back(url);
+        }
+    }
+
+    if (std::find(sitemapUrls.begin(), sitemapUrls.end(), seed) == sitemapUrls.end())
+    {
+        sitemapUrls.push_back(seed);
+    }
+
+    std::sort(sitemapUrls.begin(), sitemapUrls.end());
+    sitemapUrls.erase(std::unique(sitemapUrls.begin(), sitemapUrls.end()), sitemapUrls.end());
+
+    std::ofstream out("sitemap.xml");
+    if (!out.is_open())
+    {
+        std::cerr << "Failed to write sitemap.xml" << std::endl;
+        return;
+    }
+
+    out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+    out << "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n";
+
+    for (const auto &url : sitemapUrls)
+    {
+        out << "  <url>\n";
+        out << "    <loc>" << xmlEscape(url) << "</loc>\n";
+        out << "    <priority>" << (url == seed ? "1.0" : "0.8") << "</priority>\n";
+        out << "  </url>\n";
+    }
+
+    out << "</urlset>\n";
+    std::cout << "Generated sitemap.xml with " << sitemapUrls.size() << " URLs" << std::endl;
+}
 
 void worker(SafeQueue &queue, VisitedSet &visited, Fetcher &fetcher, Parser &parser,
             std::atomic<int> &count, std::atomic<int> &activeWorkers, int limit)
@@ -99,5 +190,6 @@ int main(int argc, char *argv[])
     }
 
     std::cout << "\nCrawling completed, total pages: " << visited.size() << std::endl;
+    writeSitemap(visited.snapshot(), seed);
     return 0;
 }
